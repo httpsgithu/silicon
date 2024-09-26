@@ -1,39 +1,9 @@
-use crate::directories::PROJECT_DIRS;
 use crate::error::ParseColorError;
-use image::imageops::{crop, resize, FilterType};
+use image::imageops::{crop_imm, resize, FilterType};
 use image::Pixel;
-use image::{DynamicImage, GenericImage, GenericImageView, Rgba, RgbaImage};
+use image::{GenericImage, GenericImageView, Rgba, RgbaImage};
 use imageproc::drawing::{draw_filled_rect_mut, draw_line_segment_mut};
 use imageproc::rect::Rect;
-use syntect::dumps;
-use syntect::highlighting::ThemeSet;
-use syntect::parsing::SyntaxSet;
-
-pub fn read_from_bat_cache() -> Option<(SyntaxSet, ThemeSet)> {
-    let cache_dir = PROJECT_DIRS.cache_dir();
-    let syntax_cache = cache_dir.join("syntaxes.bin");
-    let theme_cache = cache_dir.join("themes.bin");
-    if syntax_cache.exists() && theme_cache.exists() {
-        if let (Ok(a), Ok(b)) = (
-            dumps::from_dump_file(syntax_cache),
-            dumps::from_dump_file(theme_cache),
-        ) {
-            return Some((a, b));
-        }
-    }
-    None
-}
-
-/// Load the default SyntaxSet and ThemeSet.
-pub fn init_syntect() -> (SyntaxSet, ThemeSet) {
-    // try to use bat's cache
-    read_from_bat_cache().unwrap_or_else(|| {
-        (
-            dumps::from_binary(include_bytes!("../assets/syntaxes.bin")),
-            dumps::from_binary(include_bytes!("../assets/themes.bin")),
-        )
-    })
-}
 
 pub trait ToRgba {
     type Target;
@@ -96,38 +66,53 @@ impl ToRgba for syntect::highlighting::Color {
     }
 }
 
+pub struct WindowControlsParams {
+    pub width: u32,
+    pub height: u32,
+    pub padding: u32,
+    pub radius: u32,
+}
+
 /// Add the window controls for image
-pub(crate) fn add_window_controls(image: &mut DynamicImage) {
+pub(crate) fn add_window_controls(image: &mut RgbaImage, params: &WindowControlsParams) {
     let color = [
         ("#FF5F56", "#E0443E"),
         ("#FFBD2E", "#DEA123"),
         ("#27C93F", "#1AAB29"),
     ];
 
-    let mut background = image.get_pixel(37, 37);
+    let background = image.get_pixel_mut(37, 37);
     background.0[3] = 0;
 
-    let mut title_bar = RgbaImage::from_pixel(120 * 3, 40 * 3, background);
+    let mut title_bar = RgbaImage::from_pixel(params.width * 3, params.height * 3, *background);
+    let step = (params.radius * 2) as i32;
+    let spacer = step * 2;
+    let center_y = (params.height / 2) as i32;
 
     for (i, (fill, outline)) in color.iter().enumerate() {
         draw_filled_circle_mut(
             &mut title_bar,
-            (((i * 40) as i32 + 20) * 3, 20 * 3),
-            11 * 3,
+            ((i as i32 * spacer + step) * 3, center_y * 3),
+            (params.radius + 1) as i32 * 3,
             outline.to_rgba().unwrap(),
         );
         draw_filled_circle_mut(
             &mut title_bar,
-            (((i * 40) as i32 + 20) * 3, 20 * 3),
-            10 * 3,
+            ((i as i32 * spacer + step) * 3, center_y * 3),
+            params.radius as i32 * 3,
             fill.to_rgba().unwrap(),
         );
     }
     // create a big image and resize it to blur the edge
     // it looks better than `blur()`
-    let title_bar = resize(&title_bar, 120, 40, FilterType::Triangle);
+    let title_bar = resize(
+        &title_bar,
+        params.width,
+        params.height,
+        FilterType::Triangle,
+    );
 
-    copy_alpha(&title_bar, image.as_mut_rgba8().unwrap(), 15, 15);
+    copy_alpha(&title_bar, image, params.padding, params.padding);
 }
 
 #[derive(Clone, Debug)]
@@ -214,7 +199,7 @@ impl ShadowAdder {
         self
     }
 
-    pub fn apply_to(&self, image: &DynamicImage) -> DynamicImage {
+    pub fn apply_to(&self, image: &RgbaImage) -> RgbaImage {
         // the size of the final image
         let width = image.width() + self.pad_horiz * 2;
         let height = image.height() + self.pad_vert * 2;
@@ -236,14 +221,9 @@ impl ShadowAdder {
         // shadow = blur(&shadow, self.blur_radius);
 
         // copy the original image to the top of it
-        copy_alpha(
-            image.as_rgba8().unwrap(),
-            &mut shadow,
-            self.pad_horiz,
-            self.pad_vert,
-        );
+        copy_alpha(image, &mut shadow, self.pad_horiz, self.pad_vert);
 
-        DynamicImage::ImageRgba8(shadow)
+        shadow
     }
 }
 
@@ -276,37 +256,54 @@ pub(crate) fn copy_alpha(src: &RgbaImage, dst: &mut RgbaImage, x: u32, y: u32) {
 }
 
 /// Round the corner of the image
-pub(crate) fn round_corner(image: &mut DynamicImage, radius: u32) {
+pub(crate) fn round_corner(image: &mut RgbaImage, radius: u32) {
     // draw a circle with given foreground on given background
     // then split it into four pieces and paste them to the four corner of the image
+    //
+    // the circle is drawn on a bigger image to avoid the aliasing
+    // later it will be scaled to the correct size
+    // we add +1 (to the radius) to make sure that there is also space for the border to mitigate artefacts when scaling
+    // note that the +1 isn't added to the radius when drawing the circle
     let mut circle =
-        RgbaImage::from_pixel(radius * 2 + 1, radius * 2 + 1, Rgba([255, 255, 255, 0]));
+        RgbaImage::from_pixel((radius + 1) * 4, (radius + 1) * 4, Rgba([255, 255, 255, 0]));
 
     let width = image.width();
     let height = image.height();
 
+    // use the bottom right pixel to get the color of the foreground
     let foreground = image.get_pixel(width - 1, height - 1);
 
-    // TODO: need a blur on edge
     draw_filled_circle_mut(
         &mut circle,
-        (radius as i32, radius as i32),
-        radius as i32,
-        foreground,
+        (((radius + 1) * 2) as i32, ((radius + 1) * 2) as i32),
+        radius as i32 * 2,
+        *foreground,
     );
 
-    let part = crop(&mut circle, 0, 0, radius, radius);
-    image.copy_from(&part, 0, 0).unwrap();
+    // scale down the circle to the correct size
+    let circle = resize(
+        &circle,
+        (radius + 1) * 2,
+        (radius + 1) * 2,
+        FilterType::Triangle,
+    );
 
-    let part = crop(&mut circle, radius + 1, 0, radius, radius);
-    image.copy_from(&part, width - radius, 0).unwrap();
+    // top left
+    let part = crop_imm(&circle, 1, 1, radius, radius);
+    image.copy_from(&*part, 0, 0).unwrap();
 
-    let part = crop(&mut circle, 0, radius + 1, radius, radius);
-    image.copy_from(&part, 0, height - radius).unwrap();
+    // top right
+    let part = crop_imm(&circle, radius + 1, 1, radius, radius - 1);
+    image.copy_from(&*part, width - radius, 0).unwrap();
 
-    let part = crop(&mut circle, radius + 1, radius + 1, radius, radius);
+    // bottom left
+    let part = crop_imm(&circle, 1, radius + 1, radius, radius);
+    image.copy_from(&*part, 0, height - radius).unwrap();
+
+    // bottom right
+    let part = crop_imm(&circle, radius + 1, radius + 1, radius, radius);
     image
-        .copy_from(&part, width - radius, height - radius)
+        .copy_from(&*part, width - radius, height - radius)
         .unwrap();
 }
 

@@ -9,7 +9,7 @@ Silicon is an alternative to [Carbon](https://github.com/dawnlabs/carbon) implem
 
 It can render your source code into a beautiful image.
 
-<img width="66%" src="http://storage.aloxaf.cn/silicon.png?v=2">
+<img width="66%" src="example/example.png">
 
 ## Why Silicon
 
@@ -36,15 +36,14 @@ It's not as beautiful as Carbon...
 cargo install silicon
 ```
 
+NOTE: harfbuzz feature is enabled by default. If you are using Windows, I suggest you disable it to get it build easier.
+
 ### AUR
 
-Silicon is available on AUR (Thanks to @radmen).
+Silicon is available in the official repository:
 
-You can install it with any AUR helpers you like.
-
-eg.
 ```bash
-pikaur -S silicon
+pacman -S silicon
 ```
 
 ### Homebrew
@@ -61,18 +60,22 @@ brew install silicon
 ```bash
 sudo apt install expat
 sudo apt install libxml2-dev
-sudo apt install pkg-config libasound2-dev libssl-dev cmake libfreetype6-dev libexpat1-dev libxcb-composite0-dev
+sudo apt install pkg-config libasound2-dev libssl-dev cmake libfreetype6-dev libexpat1-dev libxcb-composite0-dev libharfbuzz-dev libfontconfig1-dev g++ 
 ```
 
 ### Fedora
 ```bash
-sudo dnf install cmake expat-devel libxcb-devel freetype-devel libxml2-devel
+sudo dnf install \
+  cmake \
+  expat-devel fontconfig-devel libxcb-devel \
+  freetype-devel libxml2-devel \
+  harfbuzz
 ```
 
 ### Arch Linux
 
 ```bash
-sudo pacman -S --needed pkgconf freetype2 fontconfig libxcb xclip
+sudo pacman -S --needed pkgconf freetype2 fontconfig libxcb xclip harfbuzz
 ```
 
 ## Examples
@@ -102,7 +105,7 @@ EOF
 Highlight specified line
 
 ```bash
-silicon main.rs -o main.png --highlight-lines '1; 3-4'
+silicon main.rs -o main.png --highlight-lines '1;3-4'
 ```
 
 Custom the image
@@ -121,13 +124,20 @@ The color can be `#RGB[A]` or `#RRGGBB[AA]`
 silicon ./target/test.rs -o test.png --background '#fff0'
 ```
 
+Show window title
+
+```bash
+silicon ./target/test.rs -o test.png --window-title "target/test.rs"
+```
+
 see `silicon --help` for detail
 
 ## Adding new syntaxes / themes
 
-Silicon reads syntax-definition and theme cache from bat's cache directory. 
+Silicon reads syntax-definition and theme cache from user's cache directory. 
 
-You can find the steps to add new syntaxes / themes for bat here: [sharkdp/bat#adding-new-syntaxes--language-definitions](https://github.com/sharkdp/bat#adding-new-syntaxes--language-definitions).
+The steps to add new syntaxes / themes is as same as bat: [sharkdp/bat#adding-new-syntaxes--language-definitions](https://github.com/sharkdp/bat#adding-new-syntaxes--language-definitions).
+Just replace `bat cache --build` to `silicon --build-cache`.
 
 ## Configuration file
 
@@ -146,3 +156,4 @@ Example:
 
 - [vim-silicon](https://github.com/segeljakt/vim-silicon)
 - [silicon.el](https://github.com/iensu/silicon-el)
+- [silicon.lua](https://github.com/narutoxy/silicon.lua)
